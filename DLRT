@@ -1,0 +1,335 @@
+import math
+import numpy as np
+import random as rd
+import time
+import matplotlib.pyplot as plt
+import torchvision
+import torch
+import torch.nn as nn
+import os
+import torchvision.transforms as transforms
+
+# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')   # may be used to speed up calculations
+
+batch_size = 600
+
+#MNIST-Dataset: load trainingset (60000 pictures) and testset (10000 pictures)
+train_dataset = torchvision.datasets.MNIST(root='./data',
+                                           train=True,
+                                           transform=transforms.ToTensor(),
+                                           download=True)
+
+test_dataset = torchvision.datasets.MNIST(root='./data',
+                                           train=False,
+                                           transform=transforms.ToTensor())
+
+#Data loader: forms batches and shuffles
+train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
+                                           batch_size=batch_size,
+                                           shuffle=True)
+
+test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
+                                           batch_size=batch_size,
+                                           shuffle=False)
+######################################################################################################################################
+# initialize neural net:
+
+# hyperparameters:
+input_size = 784     # every picture is 28x28
+hidden_size1 = 500
+hidden_size2 = 500
+hidden_size3 = 500
+num_classes = 10
+
+num_epochs = 100
+
+euler_schrittweite = 0.2              # learning rate
+adaptive = True
+singular_threshold = 0.05
+tau = 0.19
+num_layers = 4                        # number of layer must be >= 2
+
+# arrays to store information during training:
+loss_list = []
+prozent_list = []   # accuracy
+rang1_list = []     # ranks of matrices
+rang2_list = []
+rang3_list = []
+rang4_list = []
+
+class NeuralNet(nn.Module):
+  def __init__(self, input_size, hidden_size1, hidden_size2, hidden_size3, num_classes):
+    super(NeuralNet, self).__init__()
+    self.l1 = nn.Linear(input_size, hidden_size1)       # initialize the parameters randomly
+    self.relu = nn.ReLU()
+    self.l2 = nn.Linear(hidden_size1, hidden_size2)
+    self.relu = nn.ReLU()
+    self.l3 = nn.Linear(hidden_size2, hidden_size3)
+    self.relu = nn.ReLU()
+    self.l4 = nn.Linear(hidden_size3, num_classes)
+
+    self.W = [self.l1.weight, self.l2.weight, self.l3.weight, self.l4.weight]    # store starting weight matrices
+    self.b = [self.l1.bias, self.l2.bias, self.l3.bias, self.l4.bias]            # store starting biases
+    self.U = []                           # store U for each layer
+    self.S = []                           # store S for each layer
+    self.V = []                           # store V for each layer
+    self.K = []
+    self.L = []
+
+    # preparing DLRT:
+    for k in range(num_layers):
+      with torch.no_grad():
+        U1, S1, V1T = torch.linalg.svd(self.W[k])    # SVD of the matrices
+
+        """
+        U1 = U1.to(device)        # if used: push matrices to device to speed up calculations
+        S1 = S1.to(device)
+        V1T = V1T.to(device)
+        U1 = U1.to(device)
+        S1 = S1.to(device)
+        V1T = V1T.to(device)
+        """
+
+        # store U, S, V
+        self.U.append(U1)
+        self.S.append(torch.diag(S1))
+        self.V.append(V1T.t()[:, :len(S1)])
+
+        d1 = self.U[k] @ self.S[k]        # initialize K and L
+        d2 = self.V[k] @ self.S[k].t()
+
+        self.K.append(d1)
+        self.L.append(d2)
+
+      # necessary to compute the gradients
+      # self.K.requires_grad_(True)
+      # self.L.requires_grad_(True)
+
+    for tensor in self.U:
+      tensor.requires_grad_(True)
+
+    for tensor in self.S:
+      tensor.requires_grad_(True)
+
+    for tensor in self.V:
+      tensor.requires_grad_(True)
+
+  def forwardS(self, x):
+    """
+    function to calculate the forward pass but with decomposed matrices
+    x (1x784 tensor): data that should be evaluated
+    """
+    out = x @ self.V[0] @ self.S[0].t() @ self.U[0].t() + self.b[0]
+    out = self.relu(out)
+    out = out @ self.V[1] @ self.S[1].t() @ self.U[1].t() + self.b[1]
+    out = self.relu(out)
+    out = out @ self.V[2] @ self.S[2].t() @ self.U[2].t() + self.b[2]
+    out = self.relu(out)
+    out = out @ self.V[3] @ self.S[3].t() @ self.U[3].t() + self.b[3]
+    return out
+
+  def forwardK(self, x):
+    """
+    function to calculate the forward pass but uses K in k-th layer
+    should compute exactly the same output like forwardS
+    x (1x784 tensor): data that should be evaluated
+    """
+    out = x @ self.V[0] @ self.K[0].t() + self.b[0]
+    out = self.relu(out)
+    out = out @ self.V[1] @ self.K[1].t() + self.b[1]
+    out = self.relu(out)
+    out = out @ self.V[2] @ self.K[2].t() + self.b[2]
+    out = self.relu(out)
+    out = out @ self.V[3] @ self.K[3].t() + self.b[3]
+    return out
+
+  def forwardL(self, x):
+    """
+    function to calculate the forward pass but uses L in k-th layer
+    should compute exactly the same output like forwardS
+    x (1x784 tensor): data that should be evaluated
+    """
+    out = x @ self.L[0] @ self.U[0].t() + self.b[0]
+    out = self.relu(out)
+    out = out @ self.L[1] @ self.U[1].t() + self.b[1]
+    out = self.relu(out)
+    out = out @ self.L[2] @ self.U[2].t() + self.b[2]
+    out = self.relu(out)
+    out = out @ self.L[3] @ self.U[3].t() + self.b[3]
+    return out
+
+######################################################################################################################################
+model_DLRT = NeuralNet(input_size, hidden_size1, hidden_size2, hidden_size3, num_classes) #.to(device)
+
+criterion = nn.CrossEntropyLoss() # Loss-function
+
+# store starting rank of all matrices
+rang1_list.append(len(model_DLRT.S[0]))
+rang2_list.append(len(model_DLRT.S[1]))
+rang3_list.append(len(model_DLRT.S[2]))
+rang4_list.append(len(model_DLRT.S[3]))
+
+######################################################################################################################################
+
+# test accuracy before training
+def model_accuracy():
+  """
+  tests the model on the test set (10000 pictures) and returns the accuracy
+  """
+  with torch.no_grad():
+    n_correct = 0
+    n_samples = len(test_loader.dataset)
+
+    for images, labels in test_loader:
+      images = images.reshape(-1, 28*28) #.to(device)
+      labels = labels #.to(device)
+
+      outputs = model_DLRT.forwardS(images)
+
+      _, predicted = torch.max(outputs, 1)
+      n_correct += (predicted == labels).sum().item()
+
+    acc = n_correct / n_samples
+    print(f"The accuracy of the model is {100*acc} %. ({n_samples} samples)!")
+    return acc
+
+prozent_list.append(model_accuracy())
+
+######################################################################################################################################
+# DLRT training:
+startzeit = time.time()              # to calculate the running time
+
+for epoch in range(num_epochs):
+  for i , (images, labels) in enumerate(train_loader):     # number of iterations = 60000/batch_size
+    # print(f"epoche: {epoch} | i: {i}")
+    images = images.reshape(-1, 28*28) #.to(device)   # flattens the 28x28 pictures to a 1x784 vector
+    labels = labels #.to(device)
+
+    for k in range(num_layers):
+      # K - step and L - step simultaneously:
+      with torch.no_grad():
+        model_DLRT.K[k] = model_DLRT.U[k] @ model_DLRT.S[k]
+        model_DLRT.L[k] = model_DLRT.V[k] @ model_DLRT.S[k].t()
+
+      model_DLRT.K[k].requires_grad_(True)
+      model_DLRT.L[k].requires_grad_(True)
+
+    # calculate the gradient of the loss function with respect to K and L via forward pass and backpropagation:
+    outputsK = model_DLRT.forwardK(images)
+    lossK = criterion(outputsK, labels)
+    outputsL = model_DLRT.forwardL(images)
+    lossL = criterion(outputsL, labels)
+
+    lossK.backward()
+    lossL.backward()
+
+    # gradient_K0 = model_DLRT.K[0].grad
+    # gradient_L0 = model_DLRT.L[0].grad
+
+    for k in range(num_layers):
+      # Euler - step for K and L:
+      with torch.no_grad():
+        model_DLRT.K[k] -= euler_schrittweite * model_DLRT.K[k].grad
+        model_DLRT.L[k] -= euler_schrittweite * model_DLRT.L[k].grad
+
+        model_DLRT.L[k].grad.zero_() # empty the gradients
+        model_DLRT.K[k].grad.zero_()
+
+        # train with DLRT for the first 50 epochs and with fixed rank after that
+        if epoch < 50:
+          if k == (num_layers - 1):
+            adaptive = False
+          else:
+            adaptive = True
+        else: adaptive = False
+
+
+        if adaptive:
+          model_DLRT.K[k] = torch.cat((model_DLRT.K[k], model_DLRT.U[k]), dim=1)
+          model_DLRT.L[k] = torch.cat((model_DLRT.L[k], model_DLRT.V[k]), dim=1)
+
+        # S - step:
+        U_alt = model_DLRT.U[k]     # store U(t) before the update
+        Q, R = torch.linalg.qr(model_DLRT.K[k])
+        model_DLRT.U[k] = Q[:, :torch.linalg.matrix_rank(R)]
+        M = model_DLRT.U[k].t() @ U_alt
+
+
+        V_alt = model_DLRT.V[k]    # store V(t) before the update
+        Q, R = torch.linalg.qr(model_DLRT.L[k])
+        model_DLRT.V[k] = Q[:, :torch.linalg.matrix_rank(R)]
+        N = model_DLRT.V[k].t() @ V_alt
+
+        model_DLRT.S[k] = M @ model_DLRT.S[k] @ N.t()
+
+      model_DLRT.S[k].requires_grad_(True)
+
+    # calculate the gradient of the loss function with respect to S via forward pass and backpropagation:
+    outputsS = model_DLRT.forwardS(images)
+    lossS = criterion(outputsS, labels)
+
+    lossS.backward()
+
+    for k in range(num_layers):
+      # gradient_S = model_DLRT.S[k].grad
+
+      # Euler - step:
+      with torch.no_grad():
+        model_DLRT.S[k] = model_DLRT.S[k] - euler_schrittweite * model_DLRT.S[k].grad
+
+        # model_DLRT.S[k].grad.zero_()
+        model_DLRT.S[k].requires_grad_(False)
+
+        # train with DLRT for the first 50 epochs and with fixed rank after that
+        if epoch < 50:
+          if k == (num_layers - 1):
+            adaptive = False
+          else:
+            adaptive = True
+        else: adaptive = False
+
+
+        if adaptive:     # truncation
+          P, Sigma, Q = torch.linalg.svd(model_DLRT.S[k])
+          t = 0         # find index for the truncation
+          singular_threshold = tau * torch.norm(Sigma)
+          while torch.norm(Sigma[t:], p=2) > singular_threshold:
+            t += 1
+          model_DLRT.S[k] = torch.diag(Sigma[:t])
+          model_DLRT.U[k] = model_DLRT.U[k] @ P[:, :t]
+          model_DLRT.V[k] = model_DLRT.V[k] @ Q[:, :t]
+
+    # Euler step for bias
+    model_DLRT.b[k].requires_grad_(True)
+    outputb = model_DLRT.forwardS(images)
+    lossb = criterion(outputb, labels)
+
+    lossb.backward()
+
+    # gradient_b = model_DLRT.b[k].grad
+
+    for k in range(num_layers):
+      with torch.no_grad():
+        model_DLRT.b[k] -= euler_schrittweite * model_DLRT.b[k].grad
+
+        model_DLRT.b[k].grad.zero_()
+        model_DLRT.b[k].requires_grad_(False)
+
+    # for supervising the training process:
+    if (i+1) % 100 == 0:
+      loss_list.append(lossS.item())
+      print(f"Epoch [{epoch+1}/{num_epochs}], Step [{i+1}/{60000/batch_size}], Loss: {lossS.item():.4f}")
+      print(f"Rank of W1: {len(model_DLRT.S[0])}, Rank of W2: {len(model_DLRT.S[1])}, Rank of W3: {len(model_DLRT.S[2])}, Rank of W4: {len(model_DLRT.S[3])}")
+
+  # testing the accuracy between the epochs and storing the ranks:
+  prozent_list.append(model_accuracy())
+  rang1_list.append(len(model_DLRT.S[0]))
+  rang2_list.append(len(model_DLRT.S[1]))
+  rang3_list.append(len(model_DLRT.S[2]))
+  rang4_list.append(len(model_DLRT.S[3]))
+
+
+endzeit = time.time()
+dauer2 = endzeit - startzeit
+
+print(f"The algorithm needs {dauer2} sec for {num_epochs} epochs.")
