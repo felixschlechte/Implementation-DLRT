@@ -1,0 +1,172 @@
+import math
+import numpy as np
+import random as rd
+import time
+import matplotlib.pyplot as plt
+import torchvision
+import torch
+import torch.nn as nn
+import os
+import torchvision.transforms as transforms
+
+# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')   # may be used to speed up calculations
+
+print(device)
+
+batch_size = 600
+
+#MNIST - Dataset: load trainingset (60000 pictures) and testset (10000 pictures)
+train_dataset = torchvision.datasets.MNIST(root='./data',
+                                           train=True,
+                                           transform=transforms.ToTensor(),
+                                           download=True)
+
+test_dataset = torchvision.datasets.MNIST(root='./data',
+                                           train=False,
+                                           transform=transforms.ToTensor())
+
+#Data loader: forms batches and shuffles
+train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
+                                           batch_size=batch_size,
+                                           shuffle=True)
+
+test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
+                                           batch_size=batch_size,
+                                           shuffle=False)
+######################################################################################################################################
+# initialize neural net:
+
+# hyperparameters:
+input_size = 784     # every picture is 28x28
+hidden_size1 = 500
+hidden_size2 = 500
+hidden_size3 = 500
+num_classes = 10
+
+num_epochs = 30
+
+euler_schrittweite = 0.5              # learning rate
+num_layers = 4                        # number of layer must be >= 2
+
+# arrays to store information during training:
+loss_list = []
+prozent_list = []   # accuracy
+
+class NeuralNet(nn.Module):
+  def __init__(self, input_size, hidden_size1, hidden_size2, hidden_size3, num_classes):
+    super(NeuralNet, self).__init__()
+    self.l1 = nn.Linear(input_size, hidden_size1)       # initialize the parameters randomly
+    self.relu = nn.ReLU()
+    self.l2 = nn.Linear(hidden_size1, hidden_size2)
+    self.relu = nn.ReLU()
+    self.l3 = nn.Linear(hidden_size2, hidden_size3)
+    self.relu = nn.ReLU()
+    self.l4 = nn.Linear(hidden_size3, num_classes)
+
+    self.W = [self.l1.weight, self.l2.weight, self.l3.weight, self.l4.weight]    # store starting weight matrices
+    self.b = [self.l1.bias, self.l2.bias, self.l3.bias, self.l4.bias]            # store starting biases
+
+
+  def forward(self, x):
+    """
+    function to calculate the forward pass 
+    x (1x784 tensor): data that should be evaluated
+    """
+    out = x @ self.W[0].t() + self.b[0]
+    out = self.relu(out)
+    out = out @ self.W[1].t() + self.b[1]
+    out = self.relu(out)
+    out = out @ self.W[2].t() + self.b[2]
+    out = self.relu(out)
+    out = out @ self.W[3].t() + self.b[3]
+    return out
+
+
+model_klassisch = NeuralNet(input_size, hidden_size1, hidden_size2, hidden_size3, num_classes) #.to(device)
+
+criterion = nn.CrossEntropyLoss() # Loss-function
+######################################################################################################################################
+# test accuracy before training
+def model_accuracy():
+  """
+  tests the model on the test set (10000 pictures) and returns the accuracy
+  """
+  with torch.no_grad():
+    n_correct = 0
+    n_samples = len(test_loader.dataset)
+
+    for images, labels in test_loader:
+      images = images.reshape(-1, 28*28) #.to(device)
+      labels = labels #.to(device)
+
+      outputs = model_klassisch.forward(images)
+
+      _, predicted = torch.max(outputs, 1)
+      n_correct += (predicted == labels).sum().item()
+
+    acc = n_correct / n_samples
+    print(f"Das Modell ist von {n_samples} Test Bildern zu {100*acc} % korrekt!")
+    return acc
+
+prozent_list.append(model_accuracy())
+######################################################################################################################################
+# gradient descent
+startzeit = time.time()              # to calculate the running time
+
+for epoch in range(num_epochs):
+  for i , (images, labels) in enumerate(train_loader): # number of iterations = 60000/batch_size
+
+    images = images.reshape(-1, 28*28) #.to(device)   # flattens the 28x28 pictures to a 1x784 vector
+    labels = labels #.to(device)
+    images.requires_grad_(True)
+
+    model_klassisch.W[0].requires_grad_(True)
+    model_klassisch.b[0].requires_grad_(True)
+    model_klassisch.W[1].requires_grad_(True)
+    model_klassisch.b[1].requires_grad_(True)
+    model_klassisch.W[2].requires_grad_(True)
+    model_klassisch.b[2].requires_grad_(True)
+    model_klassisch.W[3].requires_grad_(True)
+    model_klassisch.b[3].requires_grad_(True)
+
+    outputs = model_klassisch.forward(images)
+    loss = criterion(outputs, labels)
+
+    loss.backward()
+
+    gradient_W0 = model_klassisch.W[0].grad
+    gradient_b0 = model_klassisch.b[0].grad
+    gradient_W1 = model_klassisch.W[1].grad
+    gradient_b1 = model_klassisch.b[1].grad
+    gradient_W2 = model_klassisch.W[2].grad
+    gradient_b2 = model_klassisch.b[2].grad
+    gradient_W3 = model_klassisch.W[3].grad
+    gradient_b3 = model_klassisch.b[3].grad
+
+
+
+    with torch.no_grad():
+      model_klassisch.W[0] = model_klassisch.W[0] - euler_schrittweite * gradient_W0
+      model_klassisch.b[0] = model_klassisch.b[0] - euler_schrittweite * gradient_b0
+      model_klassisch.W[1] = model_klassisch.W[1] - euler_schrittweite * gradient_W1
+      model_klassisch.b[1] = model_klassisch.b[1] - euler_schrittweite * gradient_b1
+      model_klassisch.W[2] = model_klassisch.W[2] - euler_schrittweite * gradient_W2
+      model_klassisch.b[2] = model_klassisch.b[2] - euler_schrittweite * gradient_b2
+      model_klassisch.W[3] = model_klassisch.W[3] - euler_schrittweite * gradient_W3
+      model_klassisch.b[3] = model_klassisch.b[3] - euler_schrittweite * gradient_b3
+
+
+    if (i+1) % 100 == 0:
+      loss_list.append(loss.item())
+      print(f"Epoch [{epoch+1}/{num_epochs}], Step [{i+1}/{60000/batch_size}], Loss: {loss.item():.4f}")
+
+  # testing the accuracy between the epochs:
+  prozent_list.append(model_accuracy())
+
+
+endzeit = time.time()
+
+dauer2 = endzeit - startzeit
+
+print(f"The algorithm needs {dauer2} sec for {num_epochs} epochs.")
+
