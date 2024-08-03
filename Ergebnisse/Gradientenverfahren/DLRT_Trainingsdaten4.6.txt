@@ -1,0 +1,15 @@
+Netz: 784 - 500 - 500 - 500 - 10 
+Rang - adaptiv ?: nein - voller Rang mit naivem Euler Verfahren 
+Epochen: 30 
+Euler - Schrittweite: 0.5 
+SV Trunkierung: keine Trunkierung 
+Batch - Size: 600 
+Device: cuda 
+______________________________________________________________ 
+Accuracy: [0.0808, 0.8599, 0.9496, 0.952, 0.9692, 0.9736, 0.9752, 0.9774, 0.9773, 0.142, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098] 
+Trainingsdauer: 375.6450035572052 
+Rang Entwicklung Layer 1: keine 
+Rang Entwicklung Layer 2: keine 
+Rang Entwicklung Layer 3: keine 
+Rang Entwicklung Layer 4: keine 
+Loss: [0.4246506989002228, 0.14417624473571777, 0.16004014015197754, 0.0830565020442009, 0.08024585992097855, 0.04948053136467934, 0.06597920507192612, 0.027475789189338684, 23406.6875, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan] 
